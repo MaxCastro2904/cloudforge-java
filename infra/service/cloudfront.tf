@@ -49,13 +49,6 @@ resource "aws_cloudfront_distribution" "https" {
   }
 }
 
-# Adopta la distribución existente sin crear otra.
-# Eliminar este bloque después de la primera aplicación exitosa.
-import {
-  to = aws_cloudfront_distribution.https
-  id = "E3J8UZJT85GO3C"
-}
-
 output "https_url" {
   value = "https://${aws_cloudfront_distribution.https.domain_name}"
 }
