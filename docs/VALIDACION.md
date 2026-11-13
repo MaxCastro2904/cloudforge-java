@@ -1,19 +1,70 @@
-# Validaciones realizadas
+# Validación del despliegue
 
-- Compilación del código Java con JDK 21: correcta.
-- Cinco pruebas JUnit del proyecto ejecutadas con JUnit Platform Console: cinco correctas, cero fallos.
-- Verificación HTTP adicional: `/`, `/api/hello`, `/health`, dos rutas inexistentes y POST no permitido: correcta.
-- `actionlint 1.7.7` sobre ambos workflows: sin errores.
-- `terraform fmt -check -recursive`: correcto.
-- `terraform init -backend=false` en ambos stacks: correcto, proveedor AWS descargado y locks incluidos.
-- Sintaxis Bash de los cuatro scripts y sintaxis Python del generador IAM: correctas.
-- Bootstrap de OIDC y backend probados con AWS CLI simulado, incluyendo validez JSON y salida a GITHUB_ENV. No se crearon recursos reales.
+Fecha de verificación: 13 de noviembre de 2026.
 
-## Pendiente de ejecución en GitHub / AWS
+## Ejecución de referencia
 
-- `terraform validate` no pudo completar en el entorno de preparación: el proveedor intenta abrir un socket Unix bloqueado por el entorno. El workflow ejecuta la validación real antes de desplegar.
-- Maven no pudo resolver dependencias por la configuración de red de este entorno; se verificaron compilación y las cinco pruebas mediante JDK/JUnit directamente. Maven clean verify está incluido dentro del Dockerfile.
-- Docker no está disponible en el entorno de preparación. La construcción multietapa y prueba del runtime se ejecutan en GitHub Actions.
-- Plan/apply real, publicación ECR y endpoint AWS requieren cuenta y credenciales del sandbox. No se ha creado una URL pública ni se afirma un despliegue realizado.
+https://github.com/MaxCastro2904/cloudforge-java/actions/runs/43515719918
 
-La entrega solo está completa después de un workflow verde y una validación pública exitosa en la cuenta sandbox.
+La ejecución terminó en estado `Success`, con los trabajos `validate` y `deploy` correctos.
+
+## Comprobaciones del pipeline
+
+| Comprobación | Resultado |
+|---|---|
+| Formato y validación de Terraform | Correcto |
+| Compilación y pruebas Maven dentro de Docker | Correcto |
+| Construcción y comprobación del contenedor local | Correcto |
+| Autenticación AWS mediante OIDC | Correcto |
+| Preparación del backend remoto en S3 | Correcto |
+| Aprovisionamiento de ECR con Terraform | Correcto |
+| Publicación de la imagen Docker | Correcto |
+| Aplicación de la infraestructura del servicio | Correcto |
+| Incorporación de CloudFront a Terraform | Correcto |
+| Verificación pública del servicio desde el pipeline | Correcto |
+| Generación del artefacto de evidencias | Correcto |
+
+La ejecución de referencia verificó la dirección HTTP del balanceador. La comprobación HTTPS siguiente se realizó de forma independiente.
+
+## Verificación HTTPS
+
+Se realizaron solicitudes con validación normal del certificado TLS, sin omitir la comprobación de confianza.
+
+| Endpoint | Código HTTP | Respuesta |
+|---|---|---|
+| `/api/hello` | 200 | `{"message":"Hola Mundo","service":"java-ecs-api"}` |
+| `/health` | 200 | `{"status":"UP"}` |
+
+Dirección base:
+
+```text
+https://d3c3gmuspygx6j.cloudfront.net
+```
+
+## Repetir las comprobaciones
+
+```bash
+curl --fail --show-error https://d3c3gmuspygx6j.cloudfront.net/api/hello
+curl --fail --show-error https://d3c3gmuspygx6j.cloudfront.net/health
+```
+
+También se puede utilizar el script del repositorio:
+
+```bash
+bash scripts/smoke-test.sh https://d3c3gmuspygx6j.cloudfront.net
+```
+
+## Evidencias del pipeline
+
+El artefacto `deployment-evidence` contiene:
+
+- `terraform-outputs.json`: outputs de la infraestructura desplegada.
+- `smoke-test.txt`: resultado de la comprobación pública.
+
+Los registros de GitHub Actions permiten revisar la compilación, las pruebas, la publicación de la imagen y la aplicación de Terraform.
+
+## Alcance de la validación
+
+Estas comprobaciones verifican la construcción, el despliegue y la respuesta funcional de la aplicación. No incluyen pruebas de carga, recuperación ante desastres ni una auditoría de seguridad.
+
+El certificado protege la conexión entre el cliente y CloudFront. La conexión entre CloudFront y el balanceador utiliza HTTP.
