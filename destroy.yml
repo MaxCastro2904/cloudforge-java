@@ -1,0 +1,67 @@
+name: Destroy sandbox resources
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type DESTROY to delete this exercise infrastructure'
+        required: true
+        type: string
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: aws-deployment-${{ github.repository }}
+  cancel-in-progress: false
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  PROJECT_NAME: ${{ vars.PROJECT_NAME || 'banbif-demo' }}
+  TF_VAR_aws_region: ${{ vars.AWS_REGION || 'us-east-1' }}
+  TF_VAR_project_name: ${{ vars.PROJECT_NAME || 'banbif-demo' }}
+  TF_VAR_execution_role_arn: ${{ vars.ECS_EXECUTION_ROLE_ARN }}
+  TF_VAR_image_uri: 'unused-during-destroy'
+  TF_IN_AUTOMATION: 'true'
+  TF_INPUT: 'false'
+jobs:
+  destroy:
+    if: inputs.confirmation == 'DESTROY'
+    environment: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.13.5
+          terraform_wrapper: false
+
+      - name: Authenticate with OIDC (recommended)
+        if: vars.AWS_ROLE_ARN != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-session-name: github-${{ github.run_id }}
+      - name: Authenticate with sandbox session (fallback)
+        if: vars.AWS_ROLE_ARN == ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+
+      - name: Locate remote state
+        run: |
+          account=$(aws sts get-caller-identity --query Account --output text)
+          bucket="${PROJECT_NAME}-tfstate-${account}-${AWS_REGION}"
+          aws s3api head-bucket --bucket "$bucket"
+          echo "STATE_BUCKET=$bucket" >> "$GITHUB_ENV"
+      - name: Destroy application before registry
+        run: |
+          bash scripts/terraform-init.sh service
+          terraform -chdir=infra/service plan -destroy -lock-timeout=5m -out=destroy.tfplan
+          terraform -chdir=infra/service apply -lock-timeout=5m destroy.tfplan
+          bash scripts/terraform-init.sh registry
+          terraform -chdir=infra/registry plan -destroy -lock-timeout=5m -out=destroy.tfplan
+          terraform -chdir=infra/registry apply -lock-timeout=5m destroy.tfplan
+          echo 'ECS, ALB, VPC, logs, project-created IAM role and ECR deleted. State bucket retained intentionally.' >> "$GITHUB_STEP_SUMMARY"

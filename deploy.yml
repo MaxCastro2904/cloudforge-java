@@ -1,0 +1,123 @@
+name: Build, publish and deploy
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: aws-deployment-${{ github.repository }}
+  cancel-in-progress: false
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  PROJECT_NAME: ${{ vars.PROJECT_NAME || 'banbif-demo' }}
+  TF_IN_AUTOMATION: 'true'
+  TF_INPUT: 'false'
+  TF_VAR_aws_region: ${{ vars.AWS_REGION || 'us-east-1' }}
+  TF_VAR_project_name: ${{ vars.PROJECT_NAME || 'banbif-demo' }}
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.13.5
+          terraform_wrapper: false
+      - name: Terraform formatting and validation
+        run: |
+          terraform fmt -check -recursive infra
+          for stack in registry service; do
+            terraform -chdir=infra/$stack init -backend=false -input=false
+            terraform -chdir=infra/$stack validate
+          done
+      - name: Dockerized Maven build and tests
+        run: docker build --target build -t challenge-build .
+      - name: Validate runtime image and HTTP contract
+        run: |
+          docker build -t challenge-test .
+          docker run -d --name challenge-test --read-only --tmpfs /tmp -p 8080:8080 challenge-test
+          trap 'docker logs challenge-test; docker rm -f challenge-test' EXIT
+          bash scripts/smoke-test.sh http://localhost:8080
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TF_VAR_execution_role_arn: ${{ vars.ECS_EXECUTION_ROLE_ARN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.13.5
+          terraform_wrapper: false
+
+      - name: Authenticate with OIDC (recommended)
+        if: vars.AWS_ROLE_ARN != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-session-name: github-${{ github.run_id }}
+      - name: Authenticate with sandbox session (fallback)
+        if: vars.AWS_ROLE_ARN == ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+
+      - name: Prepare protected remote backend
+        run: bash scripts/bootstrap-state.sh
+      - name: Provision ECR using Terraform
+        run: |
+          bash scripts/terraform-init.sh registry
+          terraform -chdir=infra/registry plan -lock-timeout=5m -out=registry.tfplan
+          terraform -chdir=infra/registry apply -lock-timeout=5m registry.tfplan
+          echo "ECR_URL=$(terraform -chdir=infra/registry output -raw repository_url)" >> "$GITHUB_ENV"
+      - name: Login to ECR
+        run: |
+          registry="${ECR_URL%%/*}"
+          aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$registry"
+      - name: Build and publish tested runtime image
+        run: |
+          tag="${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker build --platform linux/amd64 -t "$ECR_URL:$tag" .
+          docker push "$ECR_URL:$tag"
+          digest=$(aws ecr describe-images --repository-name "$PROJECT_NAME" --image-ids imageTag="$tag" --query 'imageDetails[0].imageDigest' --output text)
+          echo "TF_VAR_image_uri=$ECR_URL@$digest" >> "$GITHUB_ENV"
+      - name: Provision ECS and deploy immutable image
+        run: |
+          bash scripts/terraform-init.sh service
+          terraform -chdir=infra/service plan -lock-timeout=5m -out=service.tfplan
+          terraform -chdir=infra/service apply -lock-timeout=5m service.tfplan
+          mkdir -p evidence
+          terraform -chdir=infra/service output -json > evidence/terraform-outputs.json
+          echo "PUBLIC_URL=$(terraform -chdir=infra/service output -raw public_url)" >> "$GITHUB_ENV"
+      - name: Verify public endpoint
+        run: |
+          bash scripts/smoke-test.sh "$PUBLIC_URL" | tee evidence/smoke-test.txt
+          {
+            echo '## Deployment completed'
+            echo "- Public URL: $PUBLIC_URL/api/hello"
+            echo "- Health: $PUBLIC_URL/health"
+            echo "- Image: $TF_VAR_image_uri"
+            echo "- Commit: $GITHUB_SHA"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Save deployment evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/
+          if-no-files-found: ignore
+          retention-days: 7
