@@ -1,0 +1,9 @@
+**/target/
+**/.terraform/
+**/*.tfstate
+**/*.tfstate.*
+**/*.tfplan
+**/backend.hcl
+**/terraform.tfvars
+.env
+*.zip
