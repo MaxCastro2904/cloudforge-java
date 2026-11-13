@@ -102,7 +102,7 @@ jobs:
           terraform -chdir=infra/service apply -lock-timeout=5m service.tfplan
           mkdir -p evidence
           terraform -chdir=infra/service output -json > evidence/terraform-outputs.json
-          echo "PUBLIC_URL=$(terraform -chdir=infra/service output -raw public_url)" >> "$GITHUB_ENV"
+          echo "PUBLIC_URL=$(terraform -chdir=infra/service output -raw https_url)" >> "$GITHUB_ENV"
       - name: Verify public endpoint
         run: |
           bash scripts/smoke-test.sh "$PUBLIC_URL" | tee evidence/smoke-test.txt
