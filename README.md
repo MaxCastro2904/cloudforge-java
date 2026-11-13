@@ -109,7 +109,13 @@ Configurar estas variables en **Settings → Secrets and variables → Actions �
 
 La autenticación del despliegue utiliza OIDC y no requiere almacenar claves permanentes de AWS en GitHub.
 
-El proveedor OIDC, el rol del pipeline y la preparación inicial del bucket de estado forman parte de la configuración previa. La infraestructura de la aplicación, incluida CloudFront, se administra mediante Terraform.
+El stack `infra/bootstrap` administra el proveedor OIDC, el rol del pipeline, sus políticas y el bucket de estado. Los stacks `registry` y `service` administran ECR y la infraestructura de la aplicación, incluida CloudFront. La configuración inicial se ejecuta desde una sesión administrativa; las ejecuciones normales utilizan OIDC.
+
+```bash
+bash scripts/setup-oidc.sh MaxCastro2904/cloudforge-java us-east-2 banbif-demo
+```
+
+El script importa recursos existentes antes de aplicar el plan y conserva el estado inicial en `bootstrap/terraform.tfstate`.
 
 ## Pipeline CI/CD
 
@@ -131,7 +137,7 @@ ECS utiliza la imagen por digest para identificar exactamente la versión desple
 
 ## Estado de Terraform
 
-El estado se almacena en S3 y se separa entre las configuraciones `registry` y `service`.
+El estado se almacena en S3 y se separa entre las configuraciones `bootstrap`, `registry` y `service`.
 
 El backend utiliza versionamiento, cifrado, bloqueo de acceso público y bloqueo nativo del estado en S3. Las ejecuciones de despliegue y limpieza comparten un grupo de concurrencia para evitar modificaciones simultáneas desde GitHub Actions.
 

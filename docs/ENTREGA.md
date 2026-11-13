@@ -23,7 +23,7 @@ GitHub Actions obtiene credenciales temporales mediante OIDC, publica la imagen 
 
 Terraform administra el repositorio ECR, la red, los grupos de seguridad, el balanceador, el servicio ECS, el rol de ejecución de las tareas, el grupo de logs y la distribución CloudFront. Su estado se almacena en S3 con versionamiento y bloqueo nativo.
 
-El proveedor OIDC, el rol del pipeline y la preparación inicial del backend se configuran previamente mediante los scripts de soporte y las políticas IAM correspondientes.
+El stack `infra/bootstrap` administra el proveedor OIDC, el rol del pipeline, sus políticas y el backend. Se ejecuta desde una sesión administrativa e importa los recursos que ya existan. Las ejecuciones normales del pipeline utilizan el rol OIDC creado por Terraform.
 
 CloudFront proporciona el acceso HTTPS con el certificado de su dominio asignado por AWS. Las solicitudes se envían por HTTP al balanceador y desde allí al contenedor.
 
