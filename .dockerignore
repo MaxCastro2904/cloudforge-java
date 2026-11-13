@@ -1,0 +1,10 @@
+.git
+.github
+**/target
+**/.terraform
+**/*.tfstate*
+**/*.tfplan
+**/terraform.tfvars
+**/backend.hcl
+docs
+output
